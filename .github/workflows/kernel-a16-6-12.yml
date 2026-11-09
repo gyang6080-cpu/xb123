@@ -15,25 +15,29 @@ on:
           - SukiSU
           - BakaSU
           - FinaSU
-        default: BakaSU
+        default: FinaSU
+      build_channel:
+        description: "构建通道（正式=官方 Release 发行版，最新=上游最新提交）"
+        required: false
+        type: choice
+        options:
+          - "正式 (Release)"
+          - "最新 (HEAD)"
+        default: "正式 (Release)"
       version:
         description: "自定义版本名 (可选)"
         required: false
         type: string
       build_time:
-        description: "自定义构建时间 (留空=自动获取当前北京时间) (示例 Sun Dec  1 08:10:00 UTC 2026)"
+        description: "自定义构建时间 (留空=自动获取当前北京时间) (示例 Tue Dec  1 08:10:00 UTC 2026)"
         required: false
         type: string
         default: ""
       use_kpm:
-        description: "KPM 功能（仅SukiSU支持）"
+        description: "KPM 功能（仅SukiSU支持，开启未修补）"
         required: true
-        type: choice
-        default: "disabled (关闭)"
-        options:
-          - "disabled (关闭)"
-          - "enabled (开启)"
-          - "patched (开启并修补)"
+        type: boolean
+        default: false
       droidspaces:
         description: "Droidspaces 容器支持"
         required: false
@@ -55,18 +59,13 @@ on:
         required: false
         type: boolean
         default: false
-      use_zram:
-        description: "启用 ZRAM 压缩算法"
-        required: true
-        type: boolean
-        default: false
       use_bbg:
         description: "启用 BBG 基带保护"
         required: true
         type: boolean
         default: false
       use_net_enhance:
-        description: "启用 网络增强 (IPSet + BBR)"
+        description: "启用 网络增强 (BBRv3 + IPSet + Qdisc + CIFS)"
         required: true
         type: boolean
         default: false
@@ -94,12 +93,17 @@ on:
         description: "功能不兼容或无法使用时自动跳过该功能（不中断构建）"
         required: false
         type: boolean
-        default: false
+        default: true
   workflow_call:
     inputs:
       kernelsu_variant:
         required: true
         type: string
+      build_channel:
+        description: "构建通道（从 main.yml 传入；直接触发时取本工作流拉取的管理器来源）"
+        required: false
+        type: string
+        default: "正式 (Release)"
       version:
         required: false
         type: string
@@ -107,9 +111,6 @@ on:
         required: false
         type: string
         default: ""
-      use_zram:
-        required: true
-        type: boolean
       use_bbg:
         required: true
         type: boolean
@@ -118,8 +119,9 @@ on:
         type: boolean
         default: false
       use_kpm:
-        required: true
-        type: string
+        required: false
+        type: boolean
+        default: false
       use_rekernel:
         required: false
         type: boolean
@@ -149,7 +151,7 @@ on:
       skip_incompatible:
         required: false
         type: boolean
-        default: false
+        default: true
       called_from_main:
         description: "是否从 main.yml 调用（内部使用）"
         required: false
@@ -199,7 +201,7 @@ jobs:
             os_patch_level: "2026-09"
           - sub_level: "X"
             os_patch_level: "lts"
-            display_sub: "96"
+            display_sub: "97"
     uses: ./.github/workflows/build.yml
     secrets: inherit
     with:
@@ -209,15 +211,16 @@ jobs:
       display_sub: ${{ matrix.display_sub || '' }}
       os_patch_level: ${{ matrix.os_patch_level }}
       ksu_variant: ${{ inputs.kernelsu_variant }}
+      build_channel: ${{ inputs.build_channel }}
       ksu_commit: ${{ inputs.ksu_commit || needs.get-ksu-manager.outputs.ksuCommit }}
       ksu_cert_size: ${{ inputs.ksu_cert_size || needs.get-ksu-manager.outputs.managerCertSize }}
       ksu_cert_hash: ${{ inputs.ksu_cert_hash || needs.get-ksu-manager.outputs.managerCertHash }}
       version: ${{ inputs.version || '' }}
       build_time: ${{ inputs.build_time || '' }}
-      use_zram: ${{ inputs.use_zram || false }}
+      use_zram: false
       use_bbg: ${{ inputs.use_bbg }}
       use_net_enhance: ${{ inputs.use_net_enhance }}
-      use_kpm: ${{ inputs.use_kpm }}
+      use_kpm: ${{ inputs.use_kpm || false }}
       use_rekernel: ${{ inputs.use_rekernel || false }}
       cve_2026_43499_patch: ${{ inputs.cve_2026_43499_patch }}
       supp_op: ${{ inputs.supp_op || false }}
@@ -234,3 +237,4 @@ jobs:
     secrets: inherit
     with:
       kernelsu_variant: ${{ inputs.kernelsu_variant }}
+      build_channel: ${{ inputs.build_channel }}
