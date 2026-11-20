@@ -37,7 +37,7 @@ cp "$SUSFS4KSU"/kernel_patches/include/linux/* ./common/include/linux/
 # 10_enable_susfs_for_ksu.patch（该补丁面向上游 KernelSU 手动钩子模型，会把
 # hook/tp_marker.o 等编译单元移出 Kbuild，而 FinaSU 的 kprobe 模型仍引用这些
 # 符号，驱动侧一旦打补丁就会在 vmlinux 链接阶段报 undefined symbol）。
-# 至此 FinaSU 与 SukiSU/BakaSU 形态一致：驱动侧不打补丁；差异仅在于 FinaSU
+# 至此 FinaSU 与 SukiSU-Nova/BakaSU 形态一致：驱动侧不打补丁；差异仅在于 FinaSU
 # 的原生集成较新，这里顺带校验其结构（内核侧 50_add 主补丁的内联钩子依赖
 # 这些入口点/符号），漂移时立即报错而不是静默退化。
 verify_finasu_native_susfs() {
@@ -93,11 +93,11 @@ verify_finasu_native_susfs() {
 }
 
 case "$KSU_VARIANT" in
-  "SukiSU"|"BakaSU")
-    echo "SukiSU/BakaSU 使用内置 SUSFS 支持"
+  "SukiSU-Nova"|"BakaSU")
+    echo "SukiSU-Nova/BakaSU 使用内置 SUSFS 支持"
     ;;
   "FinaSU")
-    echo "FinaSU 使用树内原生 SUSFS 集成（驱动侧不打补丁，形态同 SukiSU/BakaSU）"
+    echo "FinaSU 使用树内原生 SUSFS 集成（驱动侧不打补丁，形态同 SukiSU-Nova/BakaSU）"
     verify_finasu_native_susfs
     ;;
 esac
@@ -110,13 +110,13 @@ fi
 
 # ---- susfs4ksu R28 getpriority/priority uid filter 开关归一化 ----
 # 该特性整套代码（含 susfs_switch_to_ksu_domain / susfs_restore_creds 两个辅助
-# 函数）以 CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER 为开关，但 SukiSU(builtin)、
-# BakaSU、FinaSU 的原生驱动 Kconfig 均未定义该选项，同时 SukiSU 驱动的
+# 函数）以 CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER 为开关，但 SukiSU-Nova(builtin)、
+# BakaSU、FinaSU 的原生驱动 Kconfig 均未定义该选项，同时 SukiSU-Nova 驱动的
 # supercall 分发（CMD_SUSFS_SET_PRIORITY_UID_FILTER）与 pkg_observer 无条件调用
 # susfs_set_priority_uid_filter / susfs_parse_priority_app_strings，于是：
 #   - susfs.c 的两个辅助函数失去唯一调用方，clang -Werror,-Wunused-function
-#     直接中断编译（FinaSU/BakaSU/SukiSU 三个变体均复现）；
-#   - susfs.h 中的声明被裁掉，SukiSU 驱动侧报 -Wimplicit-function-declaration。
+#     直接中断编译（FinaSU/BakaSU/SukiSU-Nova 三个变体均复现）；
+#   - susfs.h 中的声明被裁掉，SukiSU-Nova 驱动侧报 -Wimplicit-function-declaration。
 # 把开关上提到 CONFIG_KSU_SUSFS（启用 SUSFS 时恒为 y）使特性完整可用。
 # 仅改写预处理指令行：susfs.c 里 copy_config_to_buf() 的
 # "CONFIG_KSU_SUSFS_PRIORITY_UID_FILTER\n" 字符串字面量保持原样，管理器
@@ -280,18 +280,6 @@ PYEOF
 if [[ "$ANDROID_VERSION" == "android16" && "$KERNEL_VERSION" == "6.12" ]]; then
   echo "归一化 Android 16 6.12 主补丁的 fs/exec.c 头文件上下文"
   normalize_exec_include_hunk
-fi
-
-# 新版内核在 super.c 的 internal.h 之后新增了 trace/hooks/fs.h，
-# 旧版 SUSFS 主补丁以 thaw_super_locked 为上下文插入 extern 声明，会整段被拒绝；
-# 上游 2026-09-15 起已把声明挪到 unnamed_dev_ida 之后，不再依赖这段上下文，
-# 但 ShirkNeko fork 尚未同步（固定提交的旧版补丁不改 super.c），只对旧版补丁做临时调整
-SUPER_FS_H_REMOVED=""
-if grep -q '^ static int thaw_super_locked' "$SUSFS_PATCH" \
-  && grep -qF '#include <trace/hooks/fs.h>' fs/super.c; then
-  echo "临时调整 super.c 上下文"
-  sed -i '/^#include <trace\/hooks\/fs.h>$/,+1d' fs/super.c
-  SUPER_FS_H_REMOVED=1
 fi
 
 # 上游 rebase 到 5.15.211 后，susfs_def.h 的插入 hunk 把 trace/hooks 头文件
@@ -664,14 +652,6 @@ if [[ -f fs/statfs.c ]] && grep -qF 'susfs_sus_kstat_spoof_vfs_statfs(' fs/statf
   sed -i '/^#endif \/\/ #ifndef KSU_SUSFS_DEF_H$/i struct inode;\nstruct kstatfs;\nextern int susfs_sus_kstat_spoof_vfs_statfs(struct inode *inode, struct kstatfs *buf, bool *is_fuse);' "$SUSFS_DEF_H"
 fi
 
-# 上游 susfs.c 直接调用 security_sb_statfs 却没有包含 linux/security.h，
-# 5.15+ 靠其他头文件间接带入，5.10 没有这条路径，clang -Werror 报隐式声明；缺失时补上
-if [[ -f fs/susfs.c ]] && grep -qF 'security_sb_statfs(' fs/susfs.c \
-  && ! grep -qF '#include <linux/security.h>' fs/susfs.c; then
-  echo "为 susfs.c 补充 linux/security.h 头文件"
-  sed -i '0,/^#include <linux\/fs.h>$/s//#include <linux\/fs.h>\n#include <linux\/security.h>/' fs/susfs.c
-fi
-
 # 在编译前报告 SUSFS 主补丁产生的冲突文件，上游自带的已提交 .rej 不计入
 mapfile -t SUSFS_REJ_FILES < <(list_untracked_rej)
 SUSFS_REJ_COUNT=${#SUSFS_REJ_FILES[@]}
@@ -742,12 +722,6 @@ if [[ "$ANDROID_VERSION" == "android15" && "$KERNEL_VERSION" == "6.6" ]]; then
   fi
 fi
 
-if [[ -n "$SUPER_FS_H_REMOVED" ]] \
-  && ! grep -qF '#include <trace/hooks/fs.h>' fs/super.c; then
-  echo "还原 super.c 临时调整"
-  sed -i '/^#include "internal.h"$/a #include <trace/hooks/fs.h>' fs/super.c
-fi
-
 fix_missing_vm_flags_clear() {
   # Google 2024-11 及更新的 deprecated 分支带入了 16KB 页迁移的 VMA padding：
   # mm/mmap.c 的 copy_vma() 调用 vm_flags_clear()，但同分支 include/linux 未
@@ -795,7 +769,7 @@ fi
 
 # Android 15 - 6.6 修复
 if [[ "$ANDROID_VERSION" == "android15" && "$KERNEL_VERSION" == "6.6" ]]; then
-  # 修复老版 SukiSU 6.6.50~6.6.58: task_mmu.c 打入 SUSFS 后使用 vma，但旧源码没有对应声明
+  # 修复老版 SukiSU-Nova 6.6.50~6.6.58: task_mmu.c 打入 SUSFS 后使用 vma，但旧源码没有对应声明
   if [[ -n "$LEGACY_SUKISU_CONFIG" && "$CURRENT_SUB" -ge 50 && "$CURRENT_SUB" -le 58 ]] \
     && grep -qF 'vma = find_vma(mm, start_vaddr);' ./fs/proc/task_mmu.c; then
     TASK_MMU_PATCH="$KERNEL_PATCHES/wild/archived/susfs_fix_patches/v2.1.0/a15-6.6/task_mmu.c.patch"
@@ -815,7 +789,7 @@ fi
 
 # Android 16 - 6.12 修复
 if [[ "$ANDROID_VERSION" == "android16" && "$KERNEL_VERSION" == "6.12" ]]; then
-  # 固定旧版 SukiSU 在 6.12 上会重复定义 setresuid hook
+  # 固定旧版 SukiSU-Nova 在 6.12 上会重复定义 setresuid hook
   SETUID_HOOK="$KERNEL_ROOT/common/drivers/kernelsu/setuid_hook.c"
   if [[ -n "$LEGACY_SUKISU_CONFIG" && -f "$SETUID_HOOK" ]] \
     && grep -qF 'defined(CONFIG_KSU_MANUAL_HOOK))' "$SETUID_HOOK"; then
