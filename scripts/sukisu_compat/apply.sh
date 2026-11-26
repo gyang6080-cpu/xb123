@@ -30,14 +30,6 @@ set -eo pipefail
 KSU_DIR="${1:-KernelSU}"
 
 fail() {
-  if [ "$SKIP_INCOMPATIBLE" = "true" ]; then
-    echo "::warning title=SukiSU-Nova 兼容补丁已跳过::$1"
-    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-      echo "" >> "$GITHUB_STEP_SUMMARY"
-      echo "> ⏭️ **SukiSU-Nova API 兼容补丁** 已自动跳过：$1（构建未中断）" >> "$GITHUB_STEP_SUMMARY"
-    fi
-    exit 0
-  fi
   echo "::error::$1"
   exit 1
 }
@@ -141,15 +133,10 @@ fi
 #   表宽是编译期算出的 MAX_LSM_COUNT（= 内建 LSM 数量）。
 #   security_add_hooks() 里 lsm_active_cnt >= MAX_LSM_COUNT 直接
 #   panic("Too many LSMs registered")。
-#   GKI 的 gki_defconfig 恰好启用 5 个 LSM
-#   （capabilities/selinux/safesetid/bpf_lsm/landlock），
-#   MAX_LSM_COUNT == 5 且开机时全部注册，没有空位。
-#   builtin 分支的 hook/lsm_hook.c 仍在 device_initcall 阶段用
-#   security_add_hooks() 注册自己的 LSM（main/FinaSU 已改为运行期改写
-#   static call 槽位，不占新位），于是第 6 个 LSM 触发上述 panic：
-#   刷入后停在开机第一屏、panic 后不落盘任何日志（PANIC_TIMEOUT=-1）。
-# 处理：给 MAX_LSM_COUNT 预留一个显式的 KSU 槽位（KSU_ENABLED 1,）。
-#   static call 表随之加宽一列，KSU 注册时能拿到空闲槽位。
+#   GKI 启用 5 个基础 LSM（capabilities/selinux/safesetid/bpf_lsm/landlock），
+#   BasebandGuard 也使用独立 lsm_id 注册，但不在 lsm_count.h 的计数宏中。
+#   BBG + builtin SukiSU 需要额外两个槽位，不能再按没有 BBG 的 5+1 假设。
+# 处理：给 MAX_LSM_COUNT 分别预留条件 KSU / BBG 槽位，static call 表随之加宽，
 # 守卫：仅当内核启用 static call LSM 框架（security/security.c 含上述 panic）
 #   且 KSU 驱动仍调用 security_add_hooks() 时执行；上游改用槽位改写后自动跳过。
 LSM_ROOT="${KERNEL_ROOT:-.}"
@@ -158,49 +145,15 @@ LSM_PANIC_GUARD="$LSM_ROOT/common/security/security.c"
 if [ -f "$LSM_COUNT_FILE" ] && [ -f "$LSM_PANIC_GUARD" ] \
   && grep -qs 'Too many LSMs registered' "$LSM_PANIC_GUARD" \
   && grep -qs 'security_add_hooks(ksu_hooks' "$KSU_DIR/kernel/hook/lsm_hook.c"; then
-  if grep -q 'KSU_ENABLED' "$LSM_COUNT_FILE"; then
-    echo "lsm_count.h 已含 KSU 槽位，跳过"
+  if grep -q 'KSU_ENABLED' "$LSM_COUNT_FILE" && grep -q 'BBG_ENABLED' "$LSM_COUNT_FILE"; then
+    echo "lsm_count.h 已含外部 LSM 槽位，校验"
   else
-    echo "为内建 KSU 预留 LSM static call 槽位 (MAX_LSM_COUNT +1)..."
-    python3 - "$LSM_COUNT_FILE" <<'PYEOF'
-import sys
-
-path = sys.argv[1]
-text = open(path, encoding="utf-8", errors="surrogateescape").read()
-
-block = """/*
- * KernelSU registers its own LSM from device_initcall, after every built-in
- * LSM has taken its static call slot. Reserve one extra column so that
- * security_add_hooks() finds a free slot instead of panicking with
- * "Too many LSMs registered".
- */
-#if IS_ENABLED(CONFIG_KSU)
-#define KSU_ENABLED 1,
-#else
-#define KSU_ENABLED
-#endif
-
-"""
-
-anchor = "#define MAX_LSM_COUNT"
-idx = text.find(anchor)
-if idx < 0:
-    sys.exit("MAX_LSM_COUNT not found")
-
-text = text[:idx] + block + text[idx:]
-
-open_brace = text.find("COUNT_LSMS(", idx)
-if open_brace < 0:
-    sys.exit("COUNT_LSMS not found")
-line_end = text.find("\n", open_brace)
-text = text[:line_end + 1] + "\t\tKSU_ENABLED\t\t\\\n" + text[line_end + 1:]
-
-open(path, "w", encoding="utf-8", errors="surrogateescape").write(text)
-print("  lsm_count.h: MAX_LSM_COUNT 已为 KSU 增加一列")
-PYEOF
-    grep -q 'KSU_ENABLED' "$LSM_COUNT_FILE" \
-      || fail "lsm_count.h 增加 KSU 槽位后校验失败"
+    echo "为 KSU / BBG 预留 LSM static call 槽位..."
+    python3 "$COMPAT_DIR/reserve_lsm_slot.py" "$LSM_COUNT_FILE" \
+      || fail "lsm_count.h 增加 KSU 槽位失败"
   fi
+  python3 "$COMPAT_DIR/reserve_lsm_slot.py" --verify "$LSM_COUNT_FILE" \
+    || fail "lsm_count.h 中的 KSU 槽位未包含在 MAX_LSM_COUNT 内"
 else
   echo "内核无 lsm_count.h 或 KSU 未用 security_add_hooks，跳过 LSM 槽位预留"
 fi

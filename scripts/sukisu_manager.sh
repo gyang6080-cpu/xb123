@@ -3,7 +3,10 @@ set -euo pipefail
 
 CHANNEL="${1:-release}"
 KSU_DIR="${2:-KernelSU}"
-API="https://git.zako.shirkneko.top:20004/api/v1/repos/shirkneko/SukiSU"
+# 上游 Release 指向 sukisu-release，APK 不再发布到旧的 sukisu-result 仓库。
+# 该端点需 Accept: application/json 才返回 JSON，字段与 Gitea 兼容
+API="https://cnb.cool/shirkneko/sukisu-release/-/releases"
+ACCEPT="Accept: application/json"
 
 case "$CHANNEL" in
   最新*|latest*|HEAD*) ROLLING=true ;;
@@ -12,23 +15,19 @@ esac
 
 RELEASE=""
 if [ "$ROLLING" = false ]; then
-  RELEASE=$(curl -fsSL --retry 3 --max-time 30 "$API/releases?limit=40" | jq -c '
-    [ .[]
-      | select((.draft | not) and (.prerelease | not))
-      | select(.tag_name | test("(?i)^(manager-ci|manager_ci|nightly|latest|ci)$") | not)
-      | select(any(.assets[]?;
-          (.name | test("release\\.apk$"; "i")) and
-          (.name | test("(?i)debug|spoofed") | not))) ]
-    | .[0] // empty
-  ')
+  RELEASE=$(curl -fsSL --retry 3 --max-time 30 -H "$ACCEPT" "$API/latest") || {
+    STATUS=$?
+    [ "$STATUS" -eq 22 ] || exit "$STATUS"
+    RELEASE=""
+  }
   if [ -z "$RELEASE" ]; then
-    echo "::notice::SukiSU-Nova 没有正式版 APK，改用 manager-ci"
+    echo "::notice::未获取到正式版，已回退到 manager-ci 测试版"
     ROLLING=true
   fi
 fi
 
 if [ "$ROLLING" = true ]; then
-  RELEASE=$(curl -fsSL --retry 3 --max-time 30 "$API/releases/tags/manager-ci")
+  RELEASE=$(curl -fsSL --retry 3 --max-time 30 -H "$ACCEPT" "$API/tags/manager-ci")
 fi
 
 TAG=$(printf '%s' "$RELEASE" | jq -r '.tag_name')

@@ -66,7 +66,7 @@ on:
           - "237 (2025-06)"
           - "240 (2025-09)"
           - "246 (2025-12)"
-          - "lts (5.10.274)"
+          - "lts (5.10.275)"
 
       sub_level_a13_5_10:
         description: "Android 13-5.10 子版本 (选择后自动匹配安全补丁级别；仅 Android 13 + 内核 5.10 时生效)"
@@ -115,7 +115,7 @@ on:
           - "252 (2026-04)"
           - "257 (2026-07)"
           - "269 (2026-10)"
-          - "lts (5.10.274)"
+          - "lts (5.10.275)"
 
       sub_level_a13_5_15:
         description: "Android 13-5.15 子版本 (选择后自动匹配安全补丁级别；仅 Android 13 + 内核 5.15 时生效)"
@@ -159,7 +159,7 @@ on:
           - "185 (2025-07)"
           - "189 (2025-09)"
           - "194 (2025-12)"
-          - "lts (5.15.225)"
+          - "lts (5.15.226)"
 
       sub_level_a14_5_15:
         description: "Android 14-5.15 子版本 (选择后自动匹配安全补丁级别；仅 Android 14 + 内核 5.15 时生效)"
@@ -275,7 +275,7 @@ on:
           - "69 (2026-03)"
           - "81 (2026-06)"
           - "92 (2026-09)"
-          - "lts (6.12.117)"
+          - "lts (6.12.119)"
 
       sub_level_a17_6_18:
         description: "Android 17-6.18 子版本 (选择后自动匹配安全补丁级别；仅 Android 17 + 内核 6.18 时生效)"
@@ -287,7 +287,7 @@ on:
           - "20 (2026-04)"
           - "21 (2026-06)"
           - "32 (2026-09)"
-          - "lts (6.18.63)"
+          - "lts (6.18.65)"
 
       # ==================== KernelSU 配置 ====================
       kernelsu_variant:
@@ -393,11 +393,6 @@ on:
         required: false
         type: boolean
         default: false
-      skip_incompatible:
-        description: "功能不兼容或无法使用时自动跳过该功能（不中断构建）"
-        required: false
-        type: boolean
-        default: true
 
 jobs:
   resolve-version:
@@ -582,7 +577,6 @@ jobs:
       droidspaces: ${{ startsWith(inputs.droidspaces, '678') && '678' || startsWith(inputs.droidspaces, '123') && '123' || startsWith(inputs.droidspaces, '345') && '345' || 'off' }}
       droidspaces_ntsync: ${{ contains(inputs.droidspaces, 'NTSync') }}
       artifact_upload_mode: ${{ inputs.artifact_upload_mode }}
-      skip_incompatible: ${{ inputs.skip_incompatible || false }}
 
   # 先拉取官方最新上传的 Manager 构建并输出其提交 SHA，供内核构建对齐
   get-ksu-manager:
@@ -599,7 +593,6 @@ jobs:
       use_rekernel: ${{ inputs.use_rekernel }}
       use_kpm: ${{ inputs.use_kpm }}
       cve_2026_43499_patch: ${{ inputs.cve_2026_43499_patch }}
-      skip_incompatible: ${{ inputs.skip_incompatible || false }}
       droidspaces: ${{ startsWith(inputs.droidspaces, '678') && '678' || startsWith(inputs.droidspaces, '123') && '123' || startsWith(inputs.droidspaces, '345') && '345' || 'off' }}
       droidspaces_ntsync: ${{ contains(inputs.droidspaces, 'NTSync') }}
       artifact_upload_mode: ${{ inputs.artifact_upload_mode }}
